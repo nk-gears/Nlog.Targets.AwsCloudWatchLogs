@@ -1,10 +1,8 @@
 ﻿using System;
-using System.Collections.Generic;
 using Amazon;
 using Amazon.CloudWatchLogs;
 using Amazon.CloudWatchLogs.Model;
 using Amazon.Runtime;
-using NLog;
 using NLog.Common;
 using NLog.Config;
 using NLog.Targets;
@@ -16,6 +14,7 @@ namespace Nlog.Targets.AWSCloudWatchLogs
     {
         private AmazonCloudWatchLogsClient _client;
         private string _sequenenceToken;
+        private string _logStream;
 
         [RequiredParameter]
         public string ProfilesLocation { get; set; }
@@ -24,17 +23,19 @@ namespace Nlog.Targets.AWSCloudWatchLogs
         public string ProfileName { get; set; }
 
         [RequiredParameter]
-        public string LogStreamName { get; set; }
-
-        [RequiredParameter]
         public string LogGroupName { get; set; }
 
         [RequiredParameter]
         public string Region { get; set; }
 
+        public string LogStreamNamePrefix { get; set; }
+
+        public string LogStreamNameDateFormat { get; set; }
+
         public AwsCloudWatchLogs()
         {
             _sequenenceToken = null;
+            LogStreamNameDateFormat = "yyyyMMddHHmmss";
         }
 
         protected override void InitializeTarget()
@@ -46,6 +47,13 @@ namespace Nlog.Targets.AWSCloudWatchLogs
             {
                 var credentials = new StoredProfileAWSCredentials(ProfileName, ProfilesLocation);
                 _client = new AmazonCloudWatchLogsClient(credentials, RegionEndpoint.GetBySystemName(Region));
+
+                _logStream = DateTime.UtcNow.ToString(LogStreamNameDateFormat);
+                if (!string.IsNullOrWhiteSpace(LogStreamNamePrefix))
+                    _logStream = string.Concat(LogStreamNamePrefix, "_", _logStream);
+
+                _client.CreateLogStream(new CreateLogStreamRequest(LogGroupName, _logStream));
+
             }
             catch (Exception ex)
             {
@@ -53,54 +61,6 @@ namespace Nlog.Targets.AWSCloudWatchLogs
             }
 
             InternalLogger.Debug("Initialized AWSCloudWatchLogs target");
-        }
-
-        protected override async void Write(AsyncLogEventInfo logEvent)
-        {
-            try
-            {
-                var request = new PutLogEventsRequest
-                {
-                    LogEvents = new List<InputLogEvent>
-                    {
-                        logEvent.ToInputLogEvent(Layout.Render)
-                    },
-                    LogGroupName = LogGroupName,
-                    LogStreamName = LogStreamName,
-                    SequenceToken = _sequenenceToken
-                }; 
-
-                var result = await _client.PutLogEventsAsync(request);
-                _sequenenceToken = result.NextSequenceToken;
-            }
-            catch (Exception ex)
-            {
-                InternalLogger.Fatal("Failed to write log to Amazon CloudWatch Logs with\n{0}\n{1}", ex.Message, ex.StackTrace);
-            }
-        }
-
-        protected override void Write(LogEventInfo logEvent)
-        {
-            try
-            {
-                var request = new PutLogEventsRequest
-                {
-                    LogEvents = new List<InputLogEvent>
-                    {
-                        logEvent.ToInputLogEvent(Layout.Render)
-                    },
-                    LogGroupName = LogGroupName,
-                    LogStreamName = LogStreamName,
-                    SequenceToken = _sequenenceToken
-                };
-
-                var result = _client.PutLogEvents(request);
-                _sequenenceToken = result.NextSequenceToken;
-            }
-            catch (Exception ex)
-            {
-                InternalLogger.Fatal("Failed to write log to Amazon CloudWatch Logs with\n{0}\n{1}", ex.Message, ex.StackTrace);
-            }
         }
 
         protected override async void Write(AsyncLogEventInfo[] logEvents)
@@ -111,7 +71,7 @@ namespace Nlog.Targets.AWSCloudWatchLogs
                 {
                     LogEvents = logEvents.ToInputLogEvents(Layout.Render),
                     LogGroupName = LogGroupName,
-                    LogStreamName = LogStreamName,
+                    LogStreamName = _logStream,
                     SequenceToken = _sequenenceToken
                 };
 
